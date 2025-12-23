@@ -135,6 +135,23 @@ async def make_request_verbose(method: str, url: str, timeout:int=80, **kwargs):
                 'text': response.text,
             }
 
+            # Match make_request behavior: treat non-200 as error, but attach rich IO details.
+            if response.status_code != 200:
+                error_code = response_json.get('error', 'BAD_GATEWAY') if isinstance(response_json, dict) else 'BAD_GATEWAY'
+                message = response_json.get('message', 'Unknown error') if isinstance(response_json, dict) else 'Unknown error'
+                details = response_json.get('details', 'No additional details provided') if isinstance(response_json, dict) else response.text
+                error_code_enum = Error.__members__.get(error_code, Error.BAD_GATEWAY)
+                raise HTTPError(
+                    error_code_enum,
+                    message=message,
+                    details={
+                        'message': details,
+                        'request': request_info,
+                        'response': response_info,
+                        'response_json': response_json,
+                    },
+                )
+
             return {
                 'request': request_info,
                 'response': response_info,
