@@ -46,29 +46,19 @@ SEMANTIC_ID_BUSINESS_PARTNER_CERTIFICATE = (
 
 logger = logging.getLogger(__name__)
 
-async def send_feedback(payload: Dict,
-                        status: Literal['SUCCESS', 'REJECTED', 'RECEIVED'],
-                        dataplane_url: str,
-                        dataplane_access_key: str,
-                        errors: List,
-                        timeout: int = 80
-                        ) -> Dict:
+def build_feedback_message(payload: Dict,
+                           status: Literal['SUCCESS', 'REJECTED', 'RECEIVED', 'ACCEPTED'],
+                           errors: List) -> Dict:
     """
-    Sends a feedback message via the DTR endpoint using information extracted from the given payload.
+    Build a feedback message body from an incoming payload.
 
-    This function performs the following steps:
-    1. Parses the feedback message header from the input payload.
-    2. Retrieves access credentials and endpoint URL from the DTR.
-    3. Constructs the feedback message with updated metadata and provided status.
-    4. Sends the feedback to the designated DTR endpoint using an authenticated POST request.
-
-    :param payload: A dictionary containing the feedback message, expected to include a 'header' section.
-    :param status: The certificate status string to include in the outgoing feedback message.
-    :return: A dictionary representing the response from the DTR feedback.
+    Separated from `send_feedback` so other modules (e.g., step-based tests) can
+    reuse the exact same message construction logic while optionally collecting
+    verbose request/response IO.
     """
-
     header = copy.deepcopy(payload.get('header'))
-    content = {}
+    content: Dict = {}
+
     sender_bpn = header.get('senderBpn')
     receiver_bpn = header.get('receiverBpn')
 
@@ -92,13 +82,34 @@ async def send_feedback(payload: Dict,
         "BPNA000000000003"
     ]
 
-    content['documentId'] = payload.get('content', {}).get('document', {}).get('documentID', {})
-
     if errors:
         content['errors'] = errors
 
-    message_body = {'header': header,
-                    'content': content}
+    return {'header': header, 'content': content}
+
+
+async def send_feedback(payload: Dict,
+                        status: Literal['SUCCESS', 'REJECTED', 'RECEIVED'],
+                        dataplane_url: str,
+                        dataplane_access_key: str,
+                        errors: List,
+                        timeout: int = 80
+                        ) -> Dict:
+    """
+    Sends a feedback message via the DTR endpoint using information extracted from the given payload.
+
+    This function performs the following steps:
+    1. Parses the feedback message header from the input payload.
+    2. Retrieves access credentials and endpoint URL from the DTR.
+    3. Constructs the feedback message with updated metadata and provided status.
+    4. Sends the feedback to the designated DTR endpoint using an authenticated POST request.
+
+    :param payload: A dictionary containing the feedback message, expected to include a 'header' section.
+    :param status: The certificate status string to include in the outgoing feedback message.
+    :return: A dictionary representing the response from the DTR feedback.
+    """
+
+    message_body = build_feedback_message(payload=payload, status=status, errors=errors)
 
     try:
         send_feedback = await make_request(

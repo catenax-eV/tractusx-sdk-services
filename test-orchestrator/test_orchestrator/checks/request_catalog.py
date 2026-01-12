@@ -20,8 +20,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # *************************************************************
 
-"""Catalog request helper
-"""
+"""Catalog request helper"""
 from typing import Optional
 
 from test_orchestrator import config
@@ -41,6 +40,7 @@ async def get_catalog(
         operand_right: Optional[str] = None,
         offset: Optional[int] = 0,
         limit: Optional[int] = 10,
+        verbose: bool = False,
         timeout: int = 80,
 ):
     """
@@ -48,34 +48,40 @@ async def get_catalog(
 
     Parameters mirror those previously used directly in utils.get_dtr_access.
     """
-    response = await make_request_verbose(
-        "GET",
-        f"{config.DT_PULL_SERVICE_ADDRESS}/edr/get-catalog/",
-        params={
-            "operand_left": operand_left,
-            "operand_right": operand_right,
-            "operator": operator,
-            "counter_party_address": counter_party_address,
-            "counter_party_id": counter_party_id,
-            "offset": offset,
-            "limit": limit,
-        },
-        timeout=timeout,
-        headers=get_dt_pull_service_headers(),
-    )
-
-    catalog_json = response['response_json']
-
-    # Validate if the response code is 200.
-    status_code = response.get('response', {}).get('status_code')
-    if status_code != 200:
-        error_code = catalog_json.get('error', 'BAD_GATEWAY')
-        message = catalog_json.get('message', 'Unknown error')
-        details = catalog_json.get('details', 'No additional details provided')
-        error_code_enum = Error.__members__.get(error_code, Error.BAD_GATEWAY)
-        raise HTTPError(error_code_enum,
-                        message=message,
-                        details=details)
+    if verbose:
+        response = await make_request_verbose(
+            "GET",
+            f"{config.DT_PULL_SERVICE_ADDRESS}/edr/get-catalog/",
+            params={
+                "operand_left": operand_left,
+                "operand_right": operand_right,
+                "operator": operator,
+                "counter_party_address": counter_party_address,
+                "counter_party_id": counter_party_id,
+                "offset": offset,
+                "limit": limit,
+            },
+            timeout=timeout,
+            headers=get_dt_pull_service_headers(),
+        )
+        catalog_json = response["response_json"]
+    else:
+        catalog_json = await make_request(
+            "GET",
+            f"{config.DT_PULL_SERVICE_ADDRESS}/edr/get-catalog/",
+            params={
+                "operand_left": operand_left,
+                "operand_right": operand_right,
+                "operator": operator,
+                "counter_party_address": counter_party_address,
+                "counter_party_id": counter_party_id,
+                "offset": offset,
+                "limit": limit,
+            },
+            timeout=timeout,
+            headers=get_dt_pull_service_headers(),
+        )
+        response = {"response_json": catalog_json}
 
     logger.info("Catalog JSON received: %s", catalog_json)
 

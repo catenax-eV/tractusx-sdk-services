@@ -21,304 +21,452 @@
 # *************************************************************
 
 """
-Provides FastAPI endpoints for validating business partner certificates and related components.
+Step-based Certificate Validation Endpoints (CX-0135).
 
-This module defines a set of API endpoints built with FastAPI to test and validate
-the implementation of the Business Partner Certificate and the Company Certificate
-Management API (CCMAPI) within the Catena-X network. It allows for the validation
-of certificate payloads against their semantic models, tests the setup of CCMAPI
-offers, verifies the feedback mechanism, and validates the structure of feedback
-messages.
-
-The primary goal is to ensure that a participant's implementation conforms to the
-defined standards (e.g., CX-0135), facilitating interoperability across the network.
+This module provides step-based validation endpoints for Business Partner Certificates
+and the Company Certificate Management API (CCMAPI). Each endpoint returns a structured
+response with individual steps, making it easy to track progress and identify failures.
 
 Endpoints:
-- GET /feedbackmechanism-validation/: Tests if the feedback mechanism of a test subject works.
-- POST /cert-validation-test/: Validates a given certificate against its semantic model and tests feedback delivery.
-- GET /ccmapi-offer-test/: Validates the correctness of a CCMAPI asset offer and its associated usage policy.
-- POST /feedbackmessage-validation/: Validates a given feedback message against its semantic model.
+    POST /cert-validation-test/     - Full certificate validation with feedback
+    POST /feedbackmessage-validation/ - Validate feedback message schema
+    POST /check                      - Run all certificate checks (aggregated)
+
+The `verbose=true` query parameter enables detailed request/response metadata
+in the response (with sensitive headers redacted).
+
+Standards Reference:
+    CX-0135 Company Certificate Management
+    https://catenax-ev.github.io/docs/next/standards/CX-0135-CompanyCertificateManagement
+
+Integration Notes:
+    The step-based response format is designed for easy consumption by Java backends:
+    
+    {
+        "status": "success" | "partial_success" | "failed",
+        "message": "Human-readable summary",
+        "steps": [
+            {"step": "step_name", "status": "success" | "failed" | "warning", ...},
+            ...
+        ]
+    }
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Dict, Literal, Optional
+from typing import Any, Dict, Optional
+
 from fastapi import APIRouter, Depends
 
 from test_orchestrator.auth import verify_auth
 from test_orchestrator.certificate_utils import (
     send_feedback,
-    read_asset_policy,
-    validate_policy,
     run_certificate_checks,
     run_feedback_check,
     get_ccmapi_access,
     SEMANTIC_ID_FEEDBACK_MESSAGE_HEADER,
     SEMANTIC_ID_FEEDBACK_MESSAGE_CONTENT,
-    SEMANTIC_ID_BUSINESS_PARTNER_CERTIFICATE
-    )
+    SEMANTIC_ID_BUSINESS_PARTNER_CERTIFICATE,
+)
+from test_orchestrator.api.ccm_test import validate_ccmapi_offer_setup
 from test_orchestrator.errors import HTTPError, Error
+from test_orchestrator.test_steps import step, overall_status, derive_result_status
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get('/ccmapi-offer-test/',
-            response_model=Dict,
-            dependencies=[Depends(verify_auth)])
-async def validate_ccmapi_offer_setup(counter_party_address: str,
-                                      counter_party_id: str,
-                                      contract_reference: bool = True,
-                                      timeout: int = 80) -> Dict:
+# ---------------------------------------------------------------------------
+# Internal Helpers
+# ---------------------------------------------------------------------------
+
+
+async def validate_feedback_message_steps(
+    payload: Dict,
+    *,
+    semantic_id_header: str = SEMANTIC_ID_FEEDBACK_MESSAGE_HEADER,
+    semantic_id_content: str = SEMANTIC_ID_FEEDBACK_MESSAGE_CONTENT,
+    verbose: bool = False,
+) -> Dict[str, Any]:
     """
-    This test case validates if the CCMAPI Offer is set up correctly. The test is successful if the test-agent is
-    able to perform the following steps:
-        1.	Query for the CCMAPI asset in the specified connector (counter_party_address).
-        2.	Check for the correctness of all required properties of the CCMAPI.
-        3.	Validate if the usage policy (with/without contract reference) is according to the standard.
-
-        •	:param counter_party_address: Address of the dsp endpoint of a connector
-        (ends on api/v1/dsp for DSP version 2024-01).
-        •	:param counter_party_id: The identifier of the test subject that operates the connector.
-        Until at least Catena-X Release 25.09 that is the BPNL of the test subject.
-        •	:param contract_reference: Boolean (true/false) to toggle if the usage policy attached to the CCMAPI offer
-        is with or without a contract reference.
-        •	:return: A dictionary containing a success or an error message.
+    Validate a feedback message against the semantic models.
+    
+    This test validates:
+    1. The message header conforms to the MessageHeaderAspect schema
+    2. The message content conforms to the MessageContentAspect schema
+    
+    Args:
+        payload: The feedback message JSON to validate.
+        semantic_id_header: Semantic model ID for header validation.
+        semantic_id_content: Semantic model ID for content validation.
+        verbose: If True, include detailed validation info in response.
+    
+    Returns:
+        Step-based result dict with status, message, and steps list.
     """
-    asset_id, policies = await read_asset_policy(counter_party_address = counter_party_address,
-                                                 counter_party_id = counter_party_id,
-                                                 operand_left='http://purl.org/dc/terms/type',
-                                                 operand_right='%https://w3id.org/catenax/taxonomy#CCMAPI%',
-                                                 timeout=timeout)
-
-    if asset_id is None:
-        raise HTTPError(
-                Error.ASSET_NOT_FOUND,
-                message="Please check asset/policy/contractdefinition configuration",
-                details="The CCMAPI asset could not be found in the specified connector. It might be missing or" + \
-                        " misconfigured. Check the following: access policy allows access for the testbed BPNL," + \
-                        " contract definition includes the CCMAPI asset and the right policies, CCMAPI asset has all" +\
-                        " required attributes. Compare https://catenax-ev.github.io/docs/next/standards/" + \
-                        "CX-0135-CompanyCertificateManagement#214--data-asset-structure (Release Saturn).")
-    exist_policy = validate_policy(policies=policies, contract_reference=contract_reference)
-
-    if not exist_policy:
-        return {
-            "warning": "POLICY_VALIDATION_FAILED",
-            "message": "The usage policy that is used for the asset is not accurate.",
-            "details": "Please check https://catenax-ev.github.io/docs/next/standards/" + \
-                       "CX-0135-CompanyCertificateManagement#216-usage-policy (Release Saturn) for troubleshooting. " +\
-                       "If you set the parameter “contract_reference” to true, make sure your policy contains a " + \
-                       "contract reference."
-        }
-    return {
-        'status': 'ok',
-        'message': 'CCMAPI Offer is set up correctly'
+    result: Dict[str, Any] = {
+        "status": "success",
+        "message": "Feedback message validation completed",
+        "steps": [],
     }
 
+    header_errors: Optional[Dict] = None
+    content_errors: Optional[Dict] = None
 
-@router.post('/feedbackmessage-validation/',
-            response_model=Dict,
-            dependencies=[Depends(verify_auth)])
-async def feedback_message_validation(payload: Dict,
-                                      semantic_id_header: Optional[str] = SEMANTIC_ID_FEEDBACK_MESSAGE_HEADER,
-                                      semantic_id_content: Optional[str] = SEMANTIC_ID_FEEDBACK_MESSAGE_CONTENT,
-                                      timeout: int = 80):
+    async with step(result, "validate_message_header", verbose=verbose) as s:
+        header_errors, content_errors = run_feedback_check(
+            semantic_id_header=semantic_id_header,
+            semantic_id_content=semantic_id_content,
+            validation_schema=payload,
+        )
+        if header_errors and header_errors.get("status") == "nok":
+            s.set_warning(
+                "HEADER_VALIDATION_ISSUES",
+                f"Header validation found issues: {header_errors.get('errors', [])}"
+            )
+        if verbose:
+            s["validation_result"] = header_errors
+
+    async with step(result, "validate_message_content", verbose=verbose) as s:
+        if content_errors and content_errors.get("status") == "nok":
+            s.set_warning(
+                "CONTENT_VALIDATION_ISSUES",
+                f"Content validation found issues: {content_errors.get('errors', [])}"
+            )
+        if verbose:
+            s["validation_result"] = content_errors
+
+    derive_result_status(result)
+
+    messages = {
+        "success": "Feedback message is valid",
+        "partial_success": "Feedback message has minor validation issues",
+        "failed": "Feedback message validation failed",
+    }
+    result["message"] = messages.get(result["status"], "Feedback message validation completed")
+
+    return result
+
+
+async def validate_certificate_steps(
+    payload: Dict,
+    *,
+    semantic_id_header: str = SEMANTIC_ID_FEEDBACK_MESSAGE_HEADER,
+    semantic_id_content: str = SEMANTIC_ID_BUSINESS_PARTNER_CERTIFICATE,
+    contract_reference: bool = False,
+    timeout: int = 80,
+    verbose: bool = False,
+) -> Dict[str, Any]:
     """
-        This test case validates if a feedback message that is given as input conforms with the corresponding semantic
-        model. It accepts the feedback types for “Status:Received”, “Status:Rejected” and “Status:Accepted”.
-        The test case is successful if the validation did not return any errors.
-    •	:param semantic_id_header: String. Defaults to urn:samm:io.catenax.shared.message_header:3.0.0#MessageHeaderAspect
-    and points to the semantic model against which the feedback header should be validated.
-    •	:param semantic_id_content: String. Defaults to urn:samm:io.catenax.message:1.0.0#MessageContentAspect
-    and points to the semantic model against which the feedback body should be validated.
-    •	:return: A dictionary containing a success or an error message.
-        """
-    try:
-        header_validation_errors, content_validation_errors = run_feedback_check(semantic_id_header=semantic_id_header,
-                           semantic_id_content=semantic_id_content,
-                           validation_schema=payload)
+    Validate a Business Partner Certificate and test the feedback mechanism.
     
-    except HTTPError as e:
-        logger.error(f"Feedback validation failed with multiple errors: {e.json}")
-
-        raise
-
-    return {'message': 'Feedback message validation completed.',
-            'header_validation_message': header_validation_errors,
-            'content_validation_message': content_validation_errors}
-
-
-
-@router.get('/feedbackmechanism-validation/',
-            response_model=Dict,
-            dependencies=[Depends(verify_auth)])
-async def feedback_mechanism_validation(counter_party_address: str,
-                                        counter_party_id: str,
-                                        message_type: Optional[Literal['RECEIVED',
-                                                                       'ACCEPTED',
-                                                                       'REJECTED']] = 'RECEIVED',
-                                        timeout: int = 80):
-    """
-    This test case validates if the feedback mechanism of the test subject works. The test is successful,
-    if the test-agent is able to perform the following steps:
-    1.	Negotiate access to the CCMAPI Asset of the test subject.
-    2.	Send the selected feedback type (RECEIVED, ACCEPTED, REJECTED) to the CCMAPI.
-
-    •	:param counter_party_address: Address of the dsp endpoint of a connector (ends on api/v1/dsp for
-    DSP version 2024-01).
-    •	:param counter_party_id: The identifier of the test subject that operates the connector.
-    Until at least Catena-X Release 25.09 that is the BPNL of the test subject.
-    •	:param contract_reference: Boolean (true/false) to toggle if the usage policy attached to the CCMAPI offer
-    is with or without a contract reference.
-    •	:param message_type: String – one of “RECEIVED”, “ACCEPTED”, “REJECTED”. Indicates which feedback type
-    the testbed should send to the test subject.
-    •	:return: A dictionary containing a success or an error message.
-
-    """
-
-    dataplane_url, dataplane_access_key = (
-            await get_ccmapi_access(counter_party_address = counter_party_address,
-                                    counter_party_id = counter_party_id,
-                                    operand_left = 'http://purl.org/dc/terms/type',
-                                    operand_right = '%https://w3id.org/catenax/taxonomy#CCMAPI%',
-                                    asset_validation=True,
-                                    timeout=timeout))
-
-    payload = {'header': {'senderFeedbackUrl': counter_party_address,
-                          'receiverBpn': counter_party_id,
-                          'senderBpn': counter_party_id
-                          },
-               'content': {}}
-
-    errors = []
-
-    if message_type == 'REJECTED':
-        errors = [
-                {
-                        "certificateErrors": [
-                    {
-                        "message": "We do not process certificates on Sunday"
-                    },
-                    {
-                        "message": "Certificate has expired in 2024"
-                    },
-                    {
-                        "message": "Certificate was revoked"
-                    },
-                    {
-                        "message": "Unexpected data format"
-                    },
-                    {
-                        "message": "Unexpected language expected English, received Mandarin"
-                    },
-                    {
-                        "message": "Expected PDF, received JPG"
-                    },
-                    {
-                        "message": "Unknown BPNL000000000000"
-                    }
-                ],
-                "locationErrors": [
-                    {
-                        "bpn": "BPNS000000000002",
-                        "locationErrors": [
-                            {
-                                "message": "Site BPNS000000000002 has been Rejected"
-                            }
-                        ]
-                    },
-                    {
-                        "bpn": "BPNS000000000003",
-                        "locationErrors": [
-                            {
-                                "message": "Site BPNS000000000003 is missing"
-                            }
-                        ]
-                    }
-                    ]
-                }
-        ]
-
-    await send_feedback(payload, message_type, dataplane_url, dataplane_access_key, errors=errors, timeout=timeout)
-
-    return {'status': 'ok',
-            'message': f'{message_type} feedback sent successfully'}
-
-
-@router.post('/cert-validation-test/',
-             response_model=Dict,
-             dependencies=[Depends(verify_auth)])
-async def validate_certificate(payload: Dict,
-                               semantic_id_header: Optional[str] = SEMANTIC_ID_FEEDBACK_MESSAGE_HEADER,
-                               semantic_id_content: Optional[str] = SEMANTIC_ID_BUSINESS_PARTNER_CERTIFICATE,
-                               contract_reference: bool = False,
-                               timeout: int = 80):
-    """
-    This test case validates if a certificate that is given as input conforms with the latest
-    Business Partner Certificate semantic model
-    (urn:samm:io.catenax.business_partner_certificate:3.1.0#BusinessPartnerCertificate).
-    It also tries to send out an initial “RECEIVED”  or “REJECTED” feedback message to the connector that’s specified
-    in the header of the certificate depending on the semantic model validation result.
-    The test is successful if the test-agent was able to perform the following steps:
-    1.	Validate the certificate that’s given in the request body against
-    the Business Partner Certificate semantic model
-    2.	Negotiate access to the CCMAPI asset of the connector and BPNL that are defined in the certificate header as
-    “senderFeedbackUrl” and “senderBpn”.
-    3.	Send a “RECEIVED”, or “REJECTED” feedback message to the CCMAPI asset dependent on the validation result
-    of step 1. and receive a status code 200.
-    •	:param semantic_id_content: String. Defaults to
-    urn:samm:io.catenax.business_partner_certificate:3.1.0#BusinessPartnerCertificate
-    and points to the semantic model against which the certificate should be validated.
-    •	:param contract_reference: Boolean (true/false) to toggle if the usage policy attached to the CCMAPI offer is
-    with or without a contract reference.
-    •	:return: A dictionary containing a success or an error message.
-    """
-
-    dataplane_url, dataplane_access_key = await get_ccmapi_access(
-                                                counter_party_address=payload.get('header').get('senderFeedbackUrl'),
-                                                counter_party_id=payload.get('header').get('senderBpn'),
-                                                operand_left='http://purl.org/dc/terms/type',
-                                                operand_right='%https://w3id.org/catenax/taxonomy#CCMAPI%',
-                                                asset_validation=True,
-                                                timeout=timeout)
-
-    await send_feedback(payload, 'RECEIVED', dataplane_url, dataplane_access_key, errors=[], timeout=timeout)
-
-    result_asset_policy = {}
+    This test performs:
+    1. Negotiate CCMAPI access from the sender's connector
+    2. Send initial RECEIVED feedback
+    3. Validate the certificate header against the MessageHeaderAspect schema
+    4. Validate the certificate content against the BusinessPartnerCertificate schema
+    5. Validate the CCMAPI offer setup (asset + policy)
+    6. Send final ACCEPTED or REJECTED feedback based on validation
     
-    result_asset_policy = await validate_ccmapi_offer_setup(
-        counter_party_address=payload.get('header').get('senderFeedbackUrl'),
-        counter_party_id=payload.get('header').get('senderBpn'),
+    Args:
+        payload: Certificate JSON containing header and content.
+        semantic_id_header: Semantic model ID for header validation.
+        semantic_id_content: Semantic model ID for certificate validation.
+        contract_reference: If True, validates policy includes ContractReference.
+        timeout: Request timeout in seconds.
+        verbose: If True, include request/response IO metadata in response.
+    
+    Returns:
+        Step-based result dict with status, message, and steps list.
+    """
+    result: Dict[str, Any] = {
+        "status": "success",
+        "message": "Certificate validation completed",
+        "steps": [],
+    }
+
+    # Extract header info for CCMAPI access
+    header = payload.get("header", {})
+    sender_feedback_url = header.get("senderFeedbackUrl")
+    sender_bpn = header.get("senderBpn")
+
+    if not sender_feedback_url or not sender_bpn:
+        raise HTTPError(
+            Error.BAD_REQUEST,
+            message="Missing required header fields",
+            details="Certificate must contain header.senderFeedbackUrl and header.senderBpn",
+        )
+
+    dataplane_url: Optional[str] = None
+    dataplane_access_key: Optional[str] = None
+    header_errors: Optional[Dict] = None
+    cert_errors: Optional[Dict] = None
+    validation_failed = False
+
+    # Step 1: Negotiate CCMAPI access
+    async with step(result, "negotiate_ccmapi_access", verbose=verbose) as s:
+        dataplane_url, dataplane_access_key = await get_ccmapi_access(
+            counter_party_address=sender_feedback_url,
+            counter_party_id=sender_bpn,
+            operand_left="http://purl.org/dc/terms/type",
+            operand_right="%https://w3id.org/catenax/taxonomy#CCMAPI%",
+            asset_validation=True,
+            timeout=timeout,
+        )
+        if verbose:
+            s["dataplane_url"] = dataplane_url
+
+    # Step 2: Send initial RECEIVED feedback
+    async with step(result, "send_received_feedback", verbose=verbose) as s:
+        await send_feedback(
+            payload, "RECEIVED", dataplane_url, dataplane_access_key, errors=[], timeout=timeout
+        )
+        if verbose:
+            s["feedback_type"] = "RECEIVED"
+
+    # Step 3: Validate certificate header
+    async with step(result, "validate_certificate_header", verbose=verbose) as s:
+        header_errors, cert_errors = run_certificate_checks(
+            semantic_id_header=semantic_id_header,
+            semantic_id_content=semantic_id_content,
+            validation_schema=payload,
+        )
+        if header_errors and header_errors.get("status") == "nok":
+            validation_failed = True
+            s.set_warning(
+                "HEADER_VALIDATION_FAILED",
+                f"Header validation errors: {header_errors.get('errors', [])}"
+            )
+        if verbose:
+            s["validation_result"] = header_errors
+
+    # Step 4: Validate certificate content
+    async with step(result, "validate_certificate_content", verbose=verbose) as s:
+        if cert_errors and cert_errors.get("status") == "nok":
+            validation_failed = True
+            s.set_warning(
+                "CERTIFICATE_VALIDATION_FAILED",
+                f"Certificate validation errors: {cert_errors.get('errors', [])}"
+            )
+        if verbose:
+            s["validation_result"] = cert_errors
+
+    # Step 5: Validate CCMAPI offer setup (policy check)
+    policy_warning = False
+    async with step(result, "validate_ccmapi_offer", verbose=verbose) as s:
+        offer_result = await validate_ccmapi_offer_setup(
+            counter_party_address=sender_feedback_url,
+            counter_party_id=sender_bpn,
+            contract_reference=contract_reference,
+            timeout=timeout,
+            verbose=verbose,
+        )
+        if offer_result.get("status") != "success":
+            policy_warning = True
+            s.set_warning(
+                "POLICY_VALIDATION_WARNING",
+                "CCMAPI offer policy validation had issues. "
+                "See CX-0135 CompanyCertificateManagement#216 Usage Policy."
+            )
+        if verbose:
+            s["offer_validation"] = offer_result
+
+    # Step 6: Send final feedback (REJECTED or ACCEPTED)
+    async with step(result, "send_final_feedback", verbose=verbose) as s:
+        if validation_failed:
+            await send_feedback(
+                payload, "REJECTED", dataplane_url, dataplane_access_key,
+                errors=[cert_errors] if cert_errors else [], timeout=timeout
+            )
+            s["feedback_type"] = "REJECTED"
+            s["status"] = "warning"
+            s["message"] = "Sent REJECTED feedback due to validation failures"
+        else:
+            await send_feedback(
+                payload, "ACCEPTED", dataplane_url, dataplane_access_key, errors=[], timeout=timeout
+            )
+            s["feedback_type"] = "ACCEPTED"
+
+    derive_result_status(result)
+
+    # Build final message
+    if result["status"] == "success":
+        result["message"] = "Certificate is valid and all feedback sent successfully"
+    elif result["status"] == "partial_success":
+        if policy_warning:
+            result["message"] = (
+                "Certificate validation completed with policy warnings. "
+                "See https://catenax-ev.github.io/docs/next/standards/"
+                "CX-0135-CompanyCertificateManagement#216-usage-policy"
+            )
+        else:
+            result["message"] = "Certificate validation completed with warnings"
+    else:
+        result["message"] = "Certificate validation failed"
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# API Endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/feedbackmessage-validation/",
+    response_model=Dict,
+    dependencies=[Depends(verify_auth)],
+    summary="Validate feedback message schema",
+    description="Validates a feedback message against the MessageHeaderAspect and MessageContentAspect schemas.",
+)
+async def feedback_message_validation_endpoint(
+    payload: Dict,
+    semantic_id_header: Optional[str] = SEMANTIC_ID_FEEDBACK_MESSAGE_HEADER,
+    semantic_id_content: Optional[str] = SEMANTIC_ID_FEEDBACK_MESSAGE_CONTENT,
+    verbose: bool = False,
+    timeout: int = 80,
+) -> Dict:
+    """
+    Validate a feedback message against the semantic models.
+    
+    Args:
+        payload: The feedback message JSON to validate.
+        semantic_id_header: Semantic model ID for header validation.
+        semantic_id_content: Semantic model ID for content validation.
+        verbose: If True, includes detailed validation info in the response.
+        timeout: Request timeout in seconds (unused, kept for API consistency).
+    
+    Returns:
+        Step-based result with status and validation outcomes.
+    """
+    return await validate_feedback_message_steps(
+        payload=payload,
+        semantic_id_header=semantic_id_header or SEMANTIC_ID_FEEDBACK_MESSAGE_HEADER,
+        semantic_id_content=semantic_id_content or SEMANTIC_ID_FEEDBACK_MESSAGE_CONTENT,
+        verbose=verbose,
+    )
+
+
+@router.post(
+    "/cert-validation-test/",
+    response_model=Dict,
+    dependencies=[Depends(verify_auth)],
+    summary="Validate certificate and test feedback",
+    description="Full certificate validation against semantic model with CCMAPI feedback delivery.",
+)
+async def validate_certificate_endpoint(
+    payload: Dict,
+    semantic_id_header: Optional[str] = SEMANTIC_ID_FEEDBACK_MESSAGE_HEADER,
+    semantic_id_content: Optional[str] = SEMANTIC_ID_BUSINESS_PARTNER_CERTIFICATE,
+    contract_reference: bool = False,
+    verbose: bool = False,
+    timeout: int = 80,
+) -> Dict:
+    """
+    Validate a Business Partner Certificate and test the feedback mechanism.
+    
+    This is the main certificate validation endpoint that:
+    1. Validates the certificate against the BusinessPartnerCertificate schema
+    2. Negotiates access to the sender's CCMAPI asset
+    3. Sends appropriate feedback (RECEIVED → ACCEPTED/REJECTED)
+    4. Validates the CCMAPI offer policy
+    
+    Args:
+        payload: Certificate JSON containing header and content.
+        semantic_id_header: Semantic model ID for header validation.
+        semantic_id_content: Semantic model ID for certificate validation.
+        contract_reference: If True, validates policy includes ContractReference.
+        verbose: If True, includes request/response metadata in the response.
+        timeout: Request timeout in seconds.
+    
+    Returns:
+        Step-based result with status and individual step outcomes.
+    """
+    return await validate_certificate_steps(
+        payload=payload,
+        semantic_id_header=semantic_id_header or SEMANTIC_ID_FEEDBACK_MESSAGE_HEADER,
+        semantic_id_content=semantic_id_content or SEMANTIC_ID_BUSINESS_PARTNER_CERTIFICATE,
         contract_reference=contract_reference,
-        timeout=timeout)
+        timeout=timeout,
+        verbose=verbose,
+    )
 
-    header_validation_errors, cert_validation_errors = run_certificate_checks(semantic_id_header=semantic_id_header,
-                            semantic_id_content=semantic_id_content,
-                            validation_schema=payload
-                            )
 
-    if cert_validation_errors.get('status') == 'nok' or header_validation_errors.get('status') == 'nok': 
-        await send_feedback(payload, 'REJECTED', dataplane_url, dataplane_access_key, errors=[cert_validation_errors], timeout=timeout)
-
-    await send_feedback(payload, 'ACCEPTED', dataplane_url, dataplane_access_key, errors=[], timeout=timeout)
-
-    if 'warning' in result_asset_policy:
-        return {
-            'message': 'Certificate validation completed.',
-            'message_header_validation_message': header_validation_errors,
-            'certificate_validation_message': cert_validation_errors,
-            "policy_validation_message": result_asset_policy,
-            'details': 'Validation was successful, but policy is missing or is not accurate. ' + \
-            'Please check https://catenax-ev.github.io/docs/next/standards/' + \
-            'CX-0135-CompanyCertificateManagement#216-usage-policy (Release Saturn) for troubleshooting. ' + \
-            'If you set the parameter “contract_reference” to true, ' + \
-            'make sure your policy contains a contract reference.'
+@router.post(
+    "/check",
+    response_model=Dict,
+    dependencies=[Depends(verify_auth)],
+    summary="Run all certificate checks",
+    description="Aggregated endpoint that runs certificate validation + CCMAPI checks. "
+                "Designed for easy integration with Java backends.",
+)
+async def cert_check(
+    payload: Dict,
+    semantic_id_header: Optional[str] = SEMANTIC_ID_FEEDBACK_MESSAGE_HEADER,
+    semantic_id_content: Optional[str] = SEMANTIC_ID_BUSINESS_PARTNER_CERTIFICATE,
+    contract_reference: bool = False,
+    verbose: bool = False,
+    timeout: int = 80,
+) -> Dict:
+    """
+    Run all CX-0135 certificate compliance checks.
+    
+    This aggregated endpoint runs:
+    1. Certificate Validation - validates certificate schema and sends feedback
+    2. CCMAPI Offer Test - validates asset and policy configuration
+    
+    The response includes individual results for each test, making it easy
+    to identify which specific checks passed or failed.
+    
+    Args:
+        payload: Certificate JSON containing header and content.
+        semantic_id_header: Semantic model ID for header validation.
+        semantic_id_content: Semantic model ID for certificate validation.
+        contract_reference: If True, validates that policy includes ContractReference.
+        verbose: If True, includes request/response metadata in the response.
+        timeout: Request timeout in seconds.
+    
+    Returns:
+        Aggregated result with overall status and individual test results.
+    
+    Example Response:
+        {
+            "status": "success",
+            "message": "CX-0135 Certificate checks completed",
+            "results": [
+                {"status": "success", "message": "...", "steps": [...]},
+                {"status": "success", "message": "...", "steps": [...]}
+            ]
         }
+    """
+    header = payload.get("header", {})
+    sender_feedback_url = header.get("senderFeedbackUrl")
+    sender_bpn = header.get("senderBpn")
+
+    # Run certificate validation
+    cert_result = await validate_certificate_steps(
+        payload=payload,
+        semantic_id_header=semantic_id_header or SEMANTIC_ID_FEEDBACK_MESSAGE_HEADER,
+        semantic_id_content=semantic_id_content or SEMANTIC_ID_BUSINESS_PARTNER_CERTIFICATE,
+        contract_reference=contract_reference,
+        timeout=timeout,
+        verbose=verbose,
+    )
+
+    # Run CCMAPI offer validation (if we have the sender info)
+    offer_result: Dict[str, Any] = {"status": "skipped", "message": "No sender info", "steps": []}
+    if sender_feedback_url and sender_bpn:
+        offer_result = await validate_ccmapi_offer_setup(
+            counter_party_address=sender_feedback_url,
+            counter_party_id=sender_bpn,
+            contract_reference=contract_reference,
+            timeout=timeout,
+            verbose=verbose,
+        )
 
     return {
-        'message': 'Certificate validation completed.',
-        'message_header_validation_message': header_validation_errors,
-        'certificate_validation_message': cert_validation_errors,
-        "policy_validation_message": result_asset_policy}
-
-            
+        "status": overall_status([cert_result, offer_result]),
+        "message": "CX-0135 Certificate checks completed",
+        "results": [cert_result, offer_result],
+    }
