@@ -21,105 +21,71 @@
 # *************************************************************
 
 """
-Provides FastAPI endpoints for validating Catena-X notification payloads,
-Digital Twin availability, and submodel schema compliance.
+Provides FastAPI endpoints for verifying Digital Twin availability and
+submodel schema compliance.
 
-This module defines API endpoints used to verify notification structures,
-validate Digital Twin presence in a partner's Digital Twin Registry (DTR), and
-perform schema validation of referenced submodels. These endpoints support the
-test orchestration workflows required to ensure interoperability of event-driven
-processes within the Catena-X ecosystem.
+This module defines API endpoints used to validate Digital Twin presence in a
+partner's Digital Twin Registry (DTR), and perform schema validation of
+referenced submodels. These endpoints support the test orchestration workflows
+required to ensure interoperability within the Catena-X ecosystem.
 
-The primary goal is to confirm that participants correctly implement
-notification formats, DTR integration, DT retrieval, and submodel provisioning
-according to Catena-X specifications. This ensures that event exchanges and
-Digital Twin interactions function reliably across the network.
+The primary goal is to confirm that participants correctly implement DTR
+integration, DT retrieval, and submodel provisioning according to Catena-X
+specifications.
 
 Endpoints:
-- POST /notification-validation/: Validates the structure and content of a notification payload.
-- POST /data-transfer/: Validates the payload and verifies Digital Twin availability in the partner DTR.
-- POST /schema-validation/: Validates the payload and checks partner submodels against semantic schemas.
+- POST /data-transfer/: Verifies Digital Twin availability in the partner DTR.
+- POST /schema-validation/: Checks partner submodels against semantic schemas.
 """
 
 import logging
 from typing import Dict, List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 
 from test_orchestrator.auth import verify_auth
 from test_orchestrator.base_utils import submodel_validation
 from test_orchestrator.utils.special_characteristics import (
-    process_notification_and_retrieve_dtr,
-    validate_notification_payload,
-    extract_events_from_payload,
-    extract_semantic_ids,
+    process_and_retrieve_dtr,
 )
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.post('/notification-validation/',
-             response_model=Dict,
-             dependencies=[Depends(verify_auth)])
-async def notification_validation(payload: Dict,
-                                  timeout: int = 80):
-    """
-    Endpoint to validate a notification payload.
-
-    Steps performed:
-    1. Validate the structure and fields of the incoming notification.
-    2. Ensure all required header and content fields are present.
-    3. Verify field formats such as UUIDs, BPNs, and timestamps.
-
-    - :payload (Dict): Notification payload containing header and content.
-    - :timeout (int, optional): Timeout for validation-related operations. Defaults to 80.
-
-    return: a json object containing `"status": "ok"` if validation succeeds.
-    """
-
-    return validate_notification_payload(payload)
-
-
 @router.post('/data-transfer/',
              response_model=Dict,
              dependencies=[Depends(verify_auth)])
-async def data_transfer(payload: Dict,
-                        counter_party_address: str,
-                        counter_party_id: str,
-                        timeout: int = 80,
-                        max_events: int = 2):
+async def data_transfer(
+    counter_party_address: str,
+    counter_party_id: str,
+    list_of_events: List[Dict] = Body(..., description="List of events with catenaXId and submodelSemanticId"),
+    timeout: int = 80,
+    max_events: int = 2
+):
     """
-    Endpoint to validate a notification payload and verify Digital Twin presence
-    in the partner's Digital Twin Registry (DTR).
+    Endpoint to verify Digital Twin presence in the partner's Digital Twin
+    Registry (DTR).
 
     Steps performed:
-    1. Validate the incoming notification payload structure and event fields.
-    2. Resolve the partner's DTR endpoint and obtain access credentials.
-    3. For each event, retrieve the corresponding Digital Twin shell descriptor
-    via the DT Pull Service.
-    4. Raise an error if any Digital Twin cannot be retrieved.
-    5. Return a confirmation message if all lookups succeed.
+    1. Resolve the partner's DTR endpoint and obtain access credentials.
+    2. For each event, retrieve the corresponding Digital Twin shell descriptor
+       via the DT Pull Service.
+    3. Raise an error if any Digital Twin cannot be retrieved.
+    4. Return a confirmation message if all lookups succeed.
 
-    - :payload (Dict): Notification payload containing header, content, and events.
     - :param counter_party_address: Address of the partner's DSP endpoint
                                     (must end with api/v1/dsp for DSP version 2024-01).
     - :param counter_party_id: Identifier of the test subject operating the connector.
-    - :timeout (int, optional): Timeout for DTR and DT Pull Service requests. Defaults to 80.
-    - :max_events (int, optional): Maximum allowed number of events. Defaults to 2.
+    - :param list_of_events: List of event dicts containing catenaXId and submodelSemanticId.
+    - :param timeout: Timeout for DTR and DT Pull Service requests. Defaults to 80.
+    - :param max_events: Maximum allowed number of events. Defaults to 2.
 
     return: a json with a success message if Digital Twin resolution succeeds.
     """
 
-    # Validate the full payload structure
-    validate_notification_payload(payload)
-
-    # Extract only the fields needed for DTR lookup
-    list_of_events = extract_events_from_payload(payload)
-
-    # Process with explicit parameters (not the full payload)
-    _, policy_validation = await process_notification_and_retrieve_dtr(
-        list_of_events=list_of_events,
+    _, policy_validation = await process_and_retrieve_dtr(
+        events=list_of_events,
         counter_party_address=counter_party_address,
         counter_party_id=counter_party_id,
         timeout=timeout,
@@ -133,46 +99,43 @@ async def data_transfer(payload: Dict,
 @router.post('/schema-validation/',
              response_model=Dict,
              dependencies=[Depends(verify_auth)])
-async def schema_validation(payload: Dict,
-                            counter_party_address: str,
-                            counter_party_id: str,
-                            timeout: int = 80,
-                            max_events: int = 2):
+async def schema_validation(
+    counter_party_address: str,
+    counter_party_id: str,
+    list_of_events: List[Dict] = Body(..., description="List of events with catenaXId and submodelSemanticId"),
+    timeout: int = 80,
+    max_events: int = 2
+):
     """
-    Endpoint to validate a notification payload against partner schemas.
+    Endpoint to validate partner submodels against semantic schemas.
 
     Steps performed:
-    1. Validate the incoming notification payload structure.
-    2. Retrieve Digital Twin Registry (DTR) shell descriptors for the provided events
+    1. Retrieve Digital Twin Registry (DTR) shell descriptors for the provided events
        using the partner's address and ID.
-    3. For each shell descriptor, perform submodel schema validation to ensure
+    2. For each shell descriptor, perform submodel schema validation to ensure
        compliance with Catena-X standards.
-    4. Return a simple success message if all validations pass.
+    3. Return a success message if all validations pass.
 
-     - :payload (Dict): Notification payload containing header and content.
-     - :param counter_party_address: Address of the dsp endpoint of a connector
-                                     (ends on api/v1/dsp for DSP version 2024-01).
-     - :param counter_party_id: The identifier of the test subject that operates the connector.
-     - :timeout (int, optional): Timeout for external requests. Defaults to 80.
+    - :param counter_party_address: Address of the dsp endpoint of a connector
+                                    (ends on api/v1/dsp for DSP version 2024-01).
+    - :param counter_party_id: The identifier of the test subject that operates the connector.
+    - :param list_of_events: List of event dicts containing catenaXId and submodelSemanticId.
+    - :param timeout: Timeout for external requests. Defaults to 80.
+    - :param max_events: Maximum allowed number of events. Defaults to 2.
 
     return: a json with a success message if validation succeeds.
     """
 
-    # Validate the full payload structure
-    validate_notification_payload(payload)
-
-    # Extract only the fields needed for further processing
-    list_of_events = extract_events_from_payload(payload)
-    semantic_ids = extract_semantic_ids(list_of_events)
-
-    # Retrieve shell descriptors with explicit parameters
-    shell_descriptors, policy_validation = await process_notification_and_retrieve_dtr(
-        list_of_events=list_of_events,
+    shell_descriptors, policy_validation = await process_and_retrieve_dtr(
+        events=list_of_events,
         counter_party_address=counter_party_address,
         counter_party_id=counter_party_id,
         timeout=timeout,
         max_events=max_events,
     )
+
+    # Extract semantic IDs from the events
+    semantic_ids = [event.get('submodelSemanticId') for event in list_of_events]
 
     # Validate each submodel against its semantic schema
     submodel_validations = []
