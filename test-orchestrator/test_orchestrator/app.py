@@ -29,7 +29,7 @@ from fastapi import FastAPI, Depends
 
 from fastapi.security import APIKeyHeader
 
-from test_orchestrator.api import base_test_cases, cert_validation, industry_test_cases, traceability_test, special_characteristics
+from test_orchestrator.api import base_test_cases, cert_validation, industry_test_cases, traceability_test, submodel_schema_validation
 from test_orchestrator.errors import (
     HTTPError,
     http_error_handler,
@@ -101,9 +101,9 @@ def create_app():
                        prefix='/test-cases/traceability/v1',
                        tags=['Traceability Tests'])
 
-    app.include_router(special_characteristics.router,
-                       prefix='/test-cases/special-characteristics/v1',
-                       tags=['Special Characteristics Tests'])
+    app.include_router(submodel_schema_validation.router,
+                       prefix='/test-cases/submodel-schema-validation/v1',
+                       tags=['Submodel Schema Validation Tests'])
 
     app.get('/_/health', status_code=200)(health)
 

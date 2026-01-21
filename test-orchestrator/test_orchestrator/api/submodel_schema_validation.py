@@ -39,72 +39,28 @@ Endpoints:
 """
 
 import logging
-from typing import Dict, List
+from typing import Dict
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Depends
 
 from test_orchestrator.auth import verify_auth
 from test_orchestrator.base_utils import submodel_validation
-from test_orchestrator.utils.special_characteristics import (
+from test_orchestrator.utils.submodel_schema_validation import (
     process_and_retrieve_dtr,
 )
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-
-@router.post('/data-transfer/',
+@router.post('/check',
              response_model=Dict,
              dependencies=[Depends(verify_auth)])
-async def data_transfer(
+async def submodel_schema_validation(
     counter_party_address: str,
     counter_party_id: str,
-    list_of_events: List[Dict] = Body(..., description="List of events with catenaXId and submodelSemanticId"),
+    asset_id: str,
+    submodel_semantic_id: str,
     timeout: int = 80,
-    max_events: int = 2
-):
-    """
-    Endpoint to verify Digital Twin presence in the partner's Digital Twin
-    Registry (DTR).
-
-    Steps performed:
-    1. Resolve the partner's DTR endpoint and obtain access credentials.
-    2. For each event, retrieve the corresponding Digital Twin shell descriptor
-       via the DT Pull Service.
-    3. Raise an error if any Digital Twin cannot be retrieved.
-    4. Return a confirmation message if all lookups succeed.
-
-    - :param counter_party_address: Address of the partner's DSP endpoint
-                                    (must end with api/v1/dsp for DSP version 2024-01).
-    - :param counter_party_id: Identifier of the test subject operating the connector.
-    - :param list_of_events: List of event dicts containing catenaXId and submodelSemanticId.
-    - :param timeout: Timeout for DTR and DT Pull Service requests. Defaults to 80.
-    - :param max_events: Maximum allowed number of events. Defaults to 2.
-
-    return: a json with a success message if Digital Twin resolution succeeds.
-    """
-
-    _, policy_validation = await process_and_retrieve_dtr(
-        events=list_of_events,
-        counter_party_address=counter_party_address,
-        counter_party_id=counter_party_id,
-        timeout=timeout,
-        max_events=max_events,
-    )
-
-    return {'message': 'DT linkage & data transfer test is completed succesfully.',
-            'policy_validation_message': policy_validation}
-
-
-@router.post('/schema-validation/',
-             response_model=Dict,
-             dependencies=[Depends(verify_auth)])
-async def schema_validation(
-    counter_party_address: str,
-    counter_party_id: str,
-    list_of_events: List[Dict] = Body(..., description="List of events with catenaXId and submodelSemanticId"),
-    timeout: int = 80,
-    max_events: int = 2
 ):
     """
     Endpoint to validate partner submodels against semantic schemas.
@@ -126,28 +82,22 @@ async def schema_validation(
     return: a json with a success message if validation succeeds.
     """
 
-    shell_descriptors, policy_validation = await process_and_retrieve_dtr(
-        events=list_of_events,
+    shell_descriptor, policy_validation = await process_and_retrieve_dtr(
+        asset_id=asset_id,
+        # submodel_semantic_id=submodel_semantic_id,
         counter_party_address=counter_party_address,
         counter_party_id=counter_party_id,
         timeout=timeout,
-        max_events=max_events,
     )
 
-    # Extract semantic IDs from the events
-    semantic_ids = [event.get('submodelSemanticId') for event in list_of_events]
+    assert isinstance(shell_descriptor, dict), "Shell descriptor is not an dictionary!"
 
-    # Validate each submodel against its semantic schema
-    submodel_validations = []
-    for semantic_id, shell_descriptor in zip(semantic_ids, shell_descriptors):
-        validation_result = await submodel_validation(
-            counter_party_id=counter_party_id,
-            shell_descriptor=shell_descriptor,
-            semantic_id=semantic_id,
-            timeout=timeout,
-        )
-        submodel_validations.append(validation_result)
+    validation_result = await submodel_validation(
+        counter_party_id=counter_party_id,
+        shell_descriptor_spec=shell_descriptor,
+        semantic_id=submodel_semantic_id
+    )
 
     return {'message': 'Special Characteristics validation is completed.',
-            'submodel_validation_message': submodel_validations,
+            'submodel_validation_message': validation_result,
             'policy_validation_message': policy_validation}

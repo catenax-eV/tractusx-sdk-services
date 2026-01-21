@@ -69,7 +69,7 @@ async def get_partner_dtr(counter_party_address: str, counter_party_id: str, tim
     return dtr_url_shell, dtr_token, policy_validation
 
 
-async def validate_events_in_dtr(events: list, dtr_url_shell: str, dtr_token: str, timeout: int):
+async def validate_events_in_dtr(asset_id: str, dtr_url_shell: str, dtr_token: str, timeout: int):
     """
     Validate that each event's Catena-X ID corresponds to an existing Digital Twin
     in the partner's Digital Twin Registry.
@@ -91,24 +91,22 @@ async def validate_events_in_dtr(events: list, dtr_url_shell: str, dtr_token: st
     errors = []
     shell_descriptors = []
 
-    for event in events:
-        aas_id = event.get('catenaXId')
-        try:
-            shell_descriptors_spec = await make_request(
-                'GET',
-                f'{config.DT_PULL_SERVICE_ADDRESS}/dtr/shell-descriptors/',
-                params={'dataplane_url': dtr_url_shell, 'aas_id': aas_id, 'limit': 1},
-                headers=get_dt_pull_service_headers(headers={'Authorization': dtr_token}),
-                timeout=timeout
-            )
-            shell_descriptors.append(shell_descriptors_spec)
-        except HTTPError as exc:
-            errors.append(f'Failed to fetch Digital Twin for {aas_id}: {exc.message}')
-        except Exception as exc:  # W: Catching too general exception Exception
-            errors.append(f'Unexpected error for {aas_id}: {str(exc)}')
+    try:
+        shell_descriptors_spec = await make_request(
+            'GET',
+            f'{config.DT_PULL_SERVICE_ADDRESS}/dtr/shell-descriptors/',
+            params={'dataplane_url': dtr_url_shell, 'aas_id': asset_id, 'limit': 1},
+            headers=get_dt_pull_service_headers(headers={'Authorization': dtr_token}),
+            timeout=timeout
+        )
+        shell_descriptors.append(shell_descriptors_spec)
+    except HTTPError as exc:
+        errors.append(f'Failed to fetch Digital Twin for {asset_id}: {exc.message}')
+    except Exception as exc:  # W: Catching too general exception Exception
+        errors.append(f'Unexpected error for {asset_id}: {str(exc)}')
 
-        if 'errors' in shell_descriptors_spec:
-            errors.append(f'The AAS ID {aas_id} could not be found in the DTR')
+    if 'errors' in shell_descriptors_spec:
+        errors.append(f'The AAS ID {asset_id} could not be found in the DTR')
 
     if errors:
         raise HTTPError(
@@ -121,11 +119,11 @@ async def validate_events_in_dtr(events: list, dtr_url_shell: str, dtr_token: st
 
 
 async def process_and_retrieve_dtr(
-    events: List,
+    asset_id: str,
+    # submodel_semantic_id: str,
     counter_party_address: str,
     counter_party_id: str,
     timeout: int,
-    max_events: int = 2
 ):
     """
     Retrieve Digital Twin shell descriptors from the partner's DTR for the
@@ -145,16 +143,8 @@ async def process_and_retrieve_dtr(
 
     return: tuple of (shell_descriptors, policy_validation).
     """
-
-    if len(events) > max_events:
-        raise HTTPError(
-            Error.NOTIFICATION_VALIDATION_FAILED,
-            message=f'Too many events provided',
-            details=[f'Received {len(events)} events, maximum allowed is {max_events}']
-        )
-
     dtr_url_shell, dtr_token, policy_validation = \
         await get_partner_dtr(counter_party_address, counter_party_id, timeout)
-    shell_descriptors = await validate_events_in_dtr(events, dtr_url_shell, dtr_token, timeout)
+    shell_descriptors = await validate_events_in_dtr(asset_id, dtr_url_shell, dtr_token, timeout)
 
     return shell_descriptors, policy_validation
