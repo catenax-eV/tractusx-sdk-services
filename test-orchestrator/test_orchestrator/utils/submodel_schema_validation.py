@@ -27,7 +27,7 @@ from test_orchestrator import config
 from test_orchestrator.request_handler import make_request
 from test_orchestrator.auth import get_dt_pull_service_headers
 from test_orchestrator.errors import Error, HTTPError
-from test_orchestrator.utils import get_dtr_access
+from test_orchestrator.baseutils import get_dtr_access
 
 logger = logging.getLogger(__name__)
 
