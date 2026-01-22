@@ -65,39 +65,59 @@ async def submodel_schema_validation(
     """
     Endpoint to validate partner submodels against semantic schemas.
 
-    Steps performed:
-    1. Retrieve Digital Twin Registry (DTR) shell descriptors for the provided events
-       using the partner's address and ID.
-    2. For each shell descriptor, perform submodel schema validation to ensure
-       compliance with Catena-X standards.
-    3. Return a success message if all validations pass.
-
-    - :param counter_party_address: Address of the dsp endpoint of a connector
-                                    (ends on api/v1/dsp for DSP version 2024-01).
-    - :param counter_party_id: The identifier of the test subject that operates the connector.
-    - :param list_of_events: List of event dicts containing catenaXId and submodelSemanticId.
-    - :param timeout: Timeout for external requests. Defaults to 80.
-    - :param max_events: Maximum allowed number of events. Defaults to 2.
-
-    return: a json with a success message if validation succeeds.
+    Provides step-based feedback for each validation stage.
     """
+    result = {
+        "status": "success",
+        "message": "Submodel validation completed",
+        "steps": []
+    }
 
-    shell_descriptor, policy_validation = await process_and_retrieve_dtr(
-        asset_id=asset_id,
-        # submodel_semantic_id=submodel_semantic_id,
-        counter_party_address=counter_party_address,
-        counter_party_id=counter_party_id,
-        timeout=timeout,
-    )
+    def add_step(name: str, status: str, message: str | None = None, details: dict | None = None):
+        step = {"step": name, "status": status}
+        if message is not None:
+            step["message"] = message
+        if details is not None:
+            step["details"] = details
+        result["steps"].append(step)
+        if status == "failed":
+            result["status"] = "failed"
 
-    assert isinstance(shell_descriptor, dict), "Shell descriptor is not an dictionary!"
+    # Step 1: Retrieve DTR shell descriptors
+    try:
+        add_step("retrieve_shell_descriptors", "info", "Fetching shell descriptors from partner DTR")
+        shell_descriptor, policy_validation = await process_and_retrieve_dtr(
+            asset_id=asset_id,
+            counter_party_address=counter_party_address,
+            counter_party_id=counter_party_id,
+            timeout=timeout
+        )
+        add_step("retrieve_shell_descriptors", "success", "Shell descriptors retrieved successfully",
+                 details={"policy_validation": policy_validation})
+    except HTTPError as e:
+        add_step("retrieve_shell_descriptors", "failed", str(e), getattr(e, "details", None))
+        return result
+    except Exception as e:
+        add_step("retrieve_shell_descriptors", "failed", f"Unexpected error: {e}")
+        return result
 
-    validation_result = await submodel_validation(
-        counter_party_id=counter_party_id,
-        shell_descriptor_spec=shell_descriptor,
-        semantic_id=submodel_semantic_id
-    )
+    # Step 2: Validate submodel descriptor
+    try:
+        add_step("validate_submodel_descriptor", "info", f"Validating submodel {submodel_semantic_id}")
+        validation_result = await submodel_validation(
+            counter_party_id=counter_party_id,
+            shell_descriptors_spec=shell_descriptor,
+            semantic_id=submodel_semantic_id
+        )
+        add_step("validate_submodel_descriptor", "success",
+                 "Submodel validated successfully",
+                 details={"validation_result": validation_result})
+    except HTTPError as e:
+        add_step("validate_submodel_descriptor", "failed", str(e), getattr(e, "details", None))
+        return result
+    except Exception as e:
+        add_step("validate_submodel_descriptor", "failed", f"Unexpected error: {e}")
+        return result
 
-    return {'message': 'Special Characteristics validation is completed.',
-            'submodel_validation_message': validation_result,
-            'policy_validation_message': policy_validation}
+    result["message"] = "Submodel validation completed successfully"
+    return result
