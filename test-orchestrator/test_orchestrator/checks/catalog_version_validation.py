@@ -32,7 +32,7 @@ from test_orchestrator.logging.log_manager import LoggingManager
 logger = LoggingManager.get_logger(__name__)
 
 
-def validate_catalog_version(catalog_json: dict, dct_type_id: str, expected_version: str = '2.0') -> dict:
+def validate_catalog_version(catalog_json: dict, dct_type_id: str, expected_version: str = '2.0') -> dict[str, str]:
     """Validate catalog dataset version for a given dct:type.
 
     Args:

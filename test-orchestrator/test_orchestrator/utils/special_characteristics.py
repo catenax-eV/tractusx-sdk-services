@@ -73,7 +73,7 @@ def validate_notification_payload(payload: Dict):
         raise HTTPError(
             Error.MISSING_REQUIRED_FIELD,
             message='Required fields are missing in the notification',
-            details=errors)
+            details={"errrors":errors})
 
     header = payload.get('header', {})
     content = payload.get('content', {})
@@ -140,7 +140,7 @@ def validate_notification_payload(payload: Dict):
         raise HTTPError(
             Error.NOTIFICATION_VALIDATION_FAILED,
             message='Notification validation failed',
-            details=errors)
+            details={"errors" : errors})
 
     return {'status': 'ok',
             'message': 'No errors found during validating the input json.'}
@@ -171,7 +171,7 @@ async def validate_payload(payload: Dict, max_events: int):
         raise HTTPError(
             Error.NOTIFICATION_VALIDATION_FAILED,
             message=f'Notification contains more than {max_events} events',
-            details=[f'listOfEvents has {len(events)} items, maximum allowed is {max_events}']
+            details={"errors" : [f'listOfEvents has {len(events)} items, maximum allowed is {max_events}']}
         )
 
     return receiver_bpn, events
@@ -260,7 +260,7 @@ async def validate_events_in_dtr(events: list, dtr_url_shell: str, dtr_token: st
         raise HTTPError(
             Error.NOTIFICATION_VALIDATION_FAILED,
             message='One or more events failed DTR validation',
-            details=errors
+            details={"errors": errors}
         )
 
     return shell_descriptors

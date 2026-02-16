@@ -46,6 +46,48 @@ SEMANTIC_ID_BUSINESS_PARTNER_CERTIFICATE = (
 
 logger = logging.getLogger(__name__)
 
+
+def build_feedback_message(payload: Dict,
+                           status: Literal['SUCCESS', 'REJECTED', 'RECEIVED', 'ACCEPTED'],
+                           errors: List) -> Dict:
+    """
+    Build a feedback message body from an incoming payload.
+
+    Separated from `send_feedback` so other modules (e.g., step-based tests) can
+    reuse the exact same message construction logic while optionally collecting
+    verbose request/response IO.
+    """
+    header = copy.deepcopy(payload.get('header'))
+    content: Dict = {}
+
+    sender_bpn = header.get('senderBpn')
+    receiver_bpn = header.get('receiverBpn')
+
+    header['senderBpn'] = receiver_bpn
+    header['senderFeedbackUrl'] = "https://domain.tld/path/to/api"
+    header['relatedMessageId'] = str(uuid.uuid4())
+    header['context'] = "CompanyCertificateManagement-CCMAPI-Status:1.0.0"
+    header['messageId'] = str(uuid.uuid4())
+    header['receiverBpn'] = sender_bpn
+    header['sentDateTime'] = datetime.now(UTC).isoformat()
+    header['version'] = '3.1.0'
+
+    content['documentId'] = payload.get('content', {}).get('document', {}).get('documentID', {})
+    content['certificateStatus'] = status
+    content['locationBpns'] = [
+        "BPNS000000000001",
+        "BPNS000000000002",
+        "BPNS000000000003",
+        "BPNA000000000001",
+        "BPNA000000000002",
+        "BPNA000000000003"
+    ]
+
+    if errors:
+        content['errors'] = errors
+
+    return {'header': header, 'content': content}
+
 async def send_feedback(payload: Dict,
                         status: Literal['SUCCESS', 'REJECTED', 'RECEIVED'],
                         dataplane_url: str,

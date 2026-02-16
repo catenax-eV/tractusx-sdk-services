@@ -27,6 +27,8 @@ Provide FastAPI endpoints for data asset checks.
 
 from fastapi import APIRouter, Depends, Query
 
+from typing import Any
+
 from test_orchestrator import config
 from test_orchestrator.auth import verify_auth
 from test_orchestrator.checks.create_notification import (
@@ -86,7 +88,7 @@ async def traceability_test(
     results = []
 
     for asset in data_assets:
-        asset_result = {
+        asset_result: dict[str, Any] = {
             'asset_id': asset['asset_id'],
             'dct_type_id': asset['dct_type_id'],
             'status': 'success',
@@ -94,8 +96,8 @@ async def traceability_test(
             'steps': []
         }
 
-        def add_step(name: str, status: str, message: str | None = None, details: str | None = None):
-            step = {'step': name, 'status': status}
+        def add_step(name: str, status: str, message: str | None = None, details: str | dict[str, Any] | None = None):
+            step: dict[str, Any] = {'step': name, 'status': status}
             if message is not None:
                 step['message'] = message
             if details is not None:
@@ -171,7 +173,7 @@ async def traceability_test(
                     raise HTTPError(
                         Error.CATALOG_VERSION_VALIDATION_FAILED,
                         message=version_check.get('message', 'Invalid API version in catalog dataset.'),
-                        details=version_check.get('details')
+                        details=version_check.get('details', ''),
                     )
                 add_step('validate_catalog_version', 'success')
             except HTTPError as e:
@@ -246,7 +248,7 @@ async def traceability_test(
                 edr_data_address = await get_data_address(
                     counter_party_address=counter_party_address,
                     counter_party_id=counter_party_id,
-                    edr_state_id=edr_state_id
+                    edr_state_id=edr_state_id or "",
                 )
                 # Support both wrapper ({request,response,response_json}) and plain JSON
                 da_body = edr_data_address.get('response_json', edr_data_address) if isinstance(edr_data_address, dict) else edr_data_address
@@ -287,8 +289,8 @@ async def traceability_test(
             try:
                 if step_name == 'invoke_receive':
                     response = await qualitynotification_receive(
-                        endpoint=endpoint,
-                        authorization=authorization,
+                        endpoint=endpoint or "",
+                        authorization=authorization or "",
                         notification_type=asset['notificationType'],
                         job_id=job_id,
                         sender_bpn=f'{config.SENDER_BPN}',
@@ -301,8 +303,8 @@ async def traceability_test(
                     add_step('invoke_receive', 'success', details={'request': r_req, 'response': r_res})
                 elif step_name == 'invoke_update':
                     response = await qualitynotification_update(
-                        endpoint=endpoint,
-                        authorization=authorization,
+                        endpoint=endpoint or "",
+                        authorization=authorization or "",
                         notification_type=asset['notificationType'],
                         job_id=job_id,
                         sender_bpn=f'{config.SENDER_BPN}',

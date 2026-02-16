@@ -32,7 +32,7 @@ import httpx
 
 from test_orchestrator import config
 from test_orchestrator.auth import get_dt_pull_service_headers
-from test_orchestrator.checks.policy_validation import validate_policy
+from test_orchestrator.checks.policy_validation import validate_policy as pv_validate_policy
 from test_orchestrator.checks.request_catalog import get_catalog
 from test_orchestrator.errors import Error, HTTPError
 from test_orchestrator.logging.log_manager import LoggingManager
@@ -155,7 +155,7 @@ async def get_dtr_access(counter_party_address: str,
     logger.debug(f'Catalog JSON: {catalog_json}')
 
     # Validate result of the policy from the catalog if required
-    policy_validation_outcome = validate_policy(catalog_json, "DigitalTwinRegistry", "DataExchangeGovernance:1.0")
+    policy_validation_outcome = pv_validate_policy(catalog_json, "DigitalTwinRegistry", "DataExchangeGovernance:1.0")
 
     if policy_validation:
         if policy_validation_outcome['status'] != 'ok':
@@ -279,7 +279,7 @@ async def get_data_address(counter_party_address: str,
                                                   'transfer_process_id': transfer_process_id},
                                           headers=get_dt_pull_service_headers(),
                                           timeout=timeout)
-
+    # FIXME "policy_validation_outcome" and "warnings" DO NOT EXIST!
     return (edr_data_address.get('endpoint'),
             edr_data_address.get('authorization'),
             policy_validation_outcome,

@@ -25,7 +25,7 @@
 
 import logging
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException
 
 from fastapi.security import APIKeyHeader
 
@@ -35,7 +35,8 @@ from test_orchestrator.api import (
     cert_validation,
     industry_test_cases,
     traceability_test,
-    special_characteristics
+    special_characteristics,
+    ccm_test,
 )
 from test_orchestrator.errors import (
     HTTPError,
@@ -102,6 +103,10 @@ def create_app():
 
     app.include_router(cert_validation.router,
                        prefix='/test-cases/businesspartnerdatamanagement/v1',
+                       tags=['Certification Tests'])
+
+    app.include_router(ccm_test.router,
+                       prefix='/test-cases/ccm/v1',
                        tags=['Certification Tests'])
 
     app.include_router(industry_test_cases.router,

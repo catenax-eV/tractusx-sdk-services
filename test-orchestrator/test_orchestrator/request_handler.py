@@ -51,7 +51,7 @@ async def make_request(method: str, url: str, timeout:int=80, **kwargs):
             try:
                 response_json = response.json()
             except ValueError as e:
-                logger.error(f'Invalid JSON response from {url}: {e} - {response.content}')
+                logger.error(f'Invalid JSON response from {url}: {e} - {response.content.decode(errors="replace")}')
                 raise HTTPError(Error.BAD_GATEWAY,
                                 message='Received invalid JSON from server',
                                 details=str(e)) from e
@@ -108,7 +108,7 @@ async def make_request_verbose(method: str, url: str, timeout:int=80, **kwargs):
             try:
                 response_json = response.json()
             except ValueError as e:
-                logger.error(f'Invalid JSON response from {url}: {e} - {response.content}')
+                logger.error(f'Invalid JSON response from {url}: {e} - {response.content.decode(errors="replace")}')
                 raise HTTPError(Error.BAD_GATEWAY,
                                 message='Received invalid JSON from server',
                                 details=str(e)) from e
