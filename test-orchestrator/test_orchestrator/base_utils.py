@@ -25,7 +25,6 @@
 import asyncio
 from typing import Any, Dict, Optional, List
 import json
-import json
 from typing import Dict, Optional
 
 import httpx
@@ -366,7 +365,6 @@ def fetch_submodel_info(correct_element, semantic_id):
          'subm_operandright': subm_operandright
          })
 
-
 def validate_policy(
     catalog_json: Dict[str, Any],
     data_exchange_policy: Optional[Dict[str, Any]] = None,
@@ -495,15 +493,15 @@ async def submodel_validation(
         raise HTTPError(
             Error.NO_SHELLS_FOUND,
             message="The DTR did not return at least one digital twin.",
-            details="Please check https://eclipse-tractusx.github.io/docs-kits/kits/digital-twin-kit/" +\
-                " software-development-view/#registering-a-new-twin for troubleshooting")
+            details="Please check https://eclipse-tractusx.github.io/docs-kits/kits/digital-twin-kit/" + \
+                    " software-development-view/#registering-a-new-twin for troubleshooting")
 
     if len(shell_descriptors_spec['submodelDescriptors']) == 0:
         raise HTTPError(
             Error.NO_SHELLS_FOUND,
             message="The DTR did not return at least one digital twin.",
-            details="Please check https://eclipse-tractusx.github.io/docs-kits/kits/digital-twin-kit/" +\
-                " software-development-view/#registering-a-new-twin for troubleshooting")
+            details="Please check https://eclipse-tractusx.github.io/docs-kits/kits/digital-twin-kit/" + \
+                    " software-development-view/#registering-a-new-twin for troubleshooting")
 
     # Validating the smaller shell_descriptors output against a specific schema
     # to ensure the data we are using is accurate
@@ -534,7 +532,7 @@ async def submodel_validation(
         if not correct_element:
             raise HTTPError(
                 Error.SUBMODEL_DESCRIPTOR_NOT_FOUND,
-                message=f'The submodel descriptor for semanticID {semantic_id} could not be found in the DTR. ' +\
+                message=f'The submodel descriptor for semanticID {semantic_id} could not be found in the DTR. ' + \
                         'Make sure the submodel is registered accordingly and visible for the testbed BPNL',
                 details='Please check https://eclipse-tractusx.github.io/docs-kits/kits/industry-core-kit/' + \
                         'software-development-view/digital-twins#edc-policies for troubleshooting.')
@@ -548,7 +546,7 @@ async def submodel_validation(
             operand_left=submodel_info['subm_operandleft'],
             operand_right=submodel_info['subm_operandright'],
             policy_validation=False
-            )
+        )
 
         # Run the submodels request pointed at the href link. To comply with industry core standards, the testbed appends $value.
         response = httpx.get(submodel_info['href']+'/$value', headers={'Authorization': dtr_key_subm})
