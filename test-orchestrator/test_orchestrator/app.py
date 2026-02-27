@@ -27,6 +27,7 @@ import logging
 
 from fastapi import FastAPI, Depends, HTTPException
 
+from fastapi import Depends, FastAPI
 from fastapi.security import APIKeyHeader
 
 from test_orchestrator.api import (
@@ -34,16 +35,19 @@ from test_orchestrator.api import (
     base_test_cases,
     cert_validation,
     industry_test_cases,
+    product_carbon_footprint,
+    special_characteristics,
     traceability_test,
     special_characteristics,
     submodel_schema_validation,
     ccm_test,
 )
+from test_orchestrator.cache import create_cache_provider
 from test_orchestrator.errors import (
     HTTPError,
-    http_error_handler,
     ValidationException,
-    validation_exception_handler
+    http_error_handler,
+    validation_exception_handler,
 )
 from test_orchestrator.logging.log_manager import LoggingManager
 
@@ -126,6 +130,14 @@ def create_app():
                        prefix='/test-cases/submodel-schema-validation/v1',
                        tags=['Submodel Schema Validation Tests'])
 
+    app.include_router(product_carbon_footprint.router,
+                       prefix='/test-cases/product-carbon-footprint/v1',
+                       tags=['Product Carbon Footprint Tests'])
+
     app.get('/_/health', status_code=200)(health)
+
+    @app.on_event("startup")
+    async def startup():
+        app.state.cache_provider = create_cache_provider()
 
     return app
