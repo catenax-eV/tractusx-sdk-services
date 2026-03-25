@@ -110,10 +110,6 @@ def create_app():
                        prefix='/test-cases/businesspartnerdatamanagement/v1',
                        tags=['Certification Tests'])
 
-    app.include_router(ccm_test.router,
-                       prefix='/test-cases/ccm/v1',
-                       tags=['Certification Tests'])
-
     app.include_router(industry_test_cases.router,
                        prefix='/test-cases/industry-core/v1',
                        tags=['Industry Core Tests'])
