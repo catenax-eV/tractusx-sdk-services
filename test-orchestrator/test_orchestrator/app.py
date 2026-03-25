@@ -40,7 +40,6 @@ from test_orchestrator.api import (
     traceability_test,
     special_characteristics,
     submodel_schema_validation,
-    ccm_test,
 )
 from test_orchestrator.cache import create_cache_provider
 from test_orchestrator.errors import (
